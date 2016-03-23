@@ -75,6 +75,7 @@ def smoSimple(dataMatIn, classLabels, C, toler, maxIter):
         print 'iteration number: %d' % iter
     return b, alphas
 
+'''
 class optStruct:
     def __init__(self, dataMatIn, classLabels, C, toler):
         self.X = dataMatIn
@@ -85,9 +86,11 @@ class optStruct:
         self.alphas = mat(zeros((self.m, 1)))
         self.b = 0
         self.eCache = mat(zeros((self.m, 2)))   # 误差缓存
+'''
 
 def calcEk(oS, k):
-    fXk = sum(multiply(oS.alphas, oS.labelMat).T*(oS.X*oS.X[k, :].T)) + oS.b
+    fXk = float(multiply(oS.alphas, oS.labelMat).T*oS.K[:, k] + oS.b)
+    # fXk = sum(multiply(oS.alphas, oS.labelMat).T*(oS.X*oS.X[k, :].T)) + oS.b
     # fXk = float(multiply(oS.alphas, oS.labelMat).T*(oS.X*oS.X[k, :].T)) + oS.b
     Ek = fXk - float(oS.labelMat[k])
     return Ek
@@ -127,7 +130,8 @@ def innerL(i, oS):
             L = max(0, oS.alphas[j] + oS.alphas[i] - oS.C)
             H = min(oS.C, oS.alphas[j] + oS.alphas[i])
         if L == H: print 'L==H';   return 0
-        eta = 2.0*oS.X[i, :]*oS.X[j, :].T - oS.X[i, :]*oS.X[i, :].T - oS.X[j, :]*oS.X[j, :].T    # changed for kernel
+        # eta = 2.0*oS.X[i, :]*oS.X[j, :].T - oS.X[i, :]*oS.X[i, :].T - oS.X[j, :]*oS.X[j, :].T
+        eta = 2.0*oS.K[i, j] - oS.K[i, i] - oS.K[j, j]  # changed for kernel
         if eta >= 0: print 'eta>=0'; return 0
         oS.alphas[j] -= oS.labelMat[j]*(Ei - Ej)/eta
         oS.alphas[j] = clipAlpha(oS.alphas[j], H, L)
@@ -135,14 +139,12 @@ def innerL(i, oS):
         if (abs(oS.alphas[j] - alphaJold) < 0.00001):   print 'j not moving enough';    return 0
         oS.alphas[i] += oS.labelMat[j]*oS.labelMat[i]*(alphaJold - oS.alphas[j]) # update i by the same amount as j
         updateEk(oS, i) # added this for the Ecache                             # the update is in the opposite direction
-        # b1 = oS.b - Ei - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.K[i, i] - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.K[i, j]
-        b1 = oS.b - Ei - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.X[i, :]*oS.X[i, :].T - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.X[i, :]*oS.X[j, :].T
-        b2 = oS.b - Ej - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.X[i, :]*oS.X[j, :].T - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.X[j, :]*oS.X[j, :].T
-        # b2 = oS.b - Ej - oS.labelMat[i]*
-        if ((0 < oS.alphas[i]) and (oS.alphas[i] < oS.C)):
-            oS.b = b1
-        elif (0 < oS.alphas[j]) and (oS.C > oS.alphas[j]):
-            oS.b = b2
+        # b1 = oS.b - Ei - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.X[i, :]*oS.X[i, :].T - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.X[i, :]*oS.X[j, :].T
+        # b2 = oS.b - Ej - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.X[i, :]*oS.X[j, :].T - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.X[j, :]*oS.X[j, :].T
+        b1 = oS.b - Ei - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.K[i, i] - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.K[i, j]
+        b2 = oS.b - Ej - oS.labelMat[i]*(oS.alphas[i] - alphaIold)*oS.K[i, j] - oS.labelMat[j]*(oS.alphas[j] - alphaJold)*oS.K[j, j]
+        if ((0 < oS.alphas[i]) and (oS.alphas[i] < oS.C)):  oS.b = b1
+        elif (0 < oS.alphas[j]) and (oS.C > oS.alphas[j]):  oS.b = b2
         else:
             oS.b = (b1 + b2)/2.0
         return 1
@@ -150,7 +152,7 @@ def innerL(i, oS):
         return 0
 
 def smoP(dataMatIn, classLabels, C, toler, maxIter, kTup=('lin', 0)):
-    oS = optStruct(mat(dataMatIn), mat(classLabels).transpose(), C, toler)
+    oS = optStruct(mat(dataMatIn), mat(classLabels).transpose(), C, toler, kTup)
     iter = 0
     entireSet = True;
     alphaPairsChanged = 0
@@ -180,3 +182,92 @@ def calcWs(alphas, dataArr, classLabels):
     for i in range(m):
         w += multiply(alphas[i]*labelMat[i], X[i, :].T)
     return w
+
+def kernelTrans(X, A, kTup):
+    m,n = shape(X)
+    K = mat(zeros((m, 1)))
+    if kTup[0] == 'lin':
+        K = X * A.T
+    elif kTup[0] == 'rbf':
+        for j in range(m):
+            deltaRow = X[j, :] - A
+            K[j] = deltaRow*deltaRow.T
+        K = exp(K/(-1*kTup[1]**2))
+    else:
+        raise NameError('Peking we have a problem--That kernel is not recognized.')
+    return K
+
+class optStruct:
+    def __init__(self, dataMatIn, classLabels, C, toler, kTup):
+        self.X = dataMatIn
+        self.labelMat = classLabels
+        self.C = C
+        self.tol = toler
+        self.m = shape(dataMatIn)[0]
+        self.alphas = mat(zeros((self.m, 1)))
+        self.b = 0
+        self.eCache = mat(zeros((self.m, 2)))
+        self.K = mat(zeros((self.m, self.m)))
+        for i in range(self.m):
+            self.K[:, i] = kernelTrans(self.X, self.X[i, :], kTup)
+
+def testRbf(k1=1.3):
+    dataArr, labelArr = loadDataSet(r'E:\PythonWorkspace\MLIA\machinelearninginaction\Ch06\testSetRBF.txt')
+    b, alphas = smoP(dataArr, labelArr, 200, 0.0001, 10000, ('rbf', k1))    # C=200 important
+    dataMat = mat(dataArr); labelMat = mat(labelArr).transpose()
+    svInd = nonzero(alphas.A > 0)[0]
+    sVs = dataMat[svInd]    # get matrix of only support vectors
+    labelSV = labelMat[svInd]
+    print 'there are %d Support Vectors' % shape(sVs)[0]
+    m,n = shape(dataMat)
+    errorCount = 0
+    for i in range(m):
+        kernelEval = kernelTrans(sVs, dataMat[i, :], ('rbf', k1))
+        predict = kernelEval.T*multiply(labelSV, alphas[svInd]) + b
+        if sign(predict) != sign(labelArr[i]): errorCount += 1
+    print 'the training error rate is %f' % (float(errorCount)/m)
+
+    dataArr, labelArr = loadDataSet(r'E:\PythonWorkspace\MLIA\machinelearninginaction\Ch06\testSetRBF2.txt')
+    errorCount = 0
+    dataMat = mat(dataArr); labelMat = mat(labelArr).transpose()
+    m,n = shape(dataMat)
+    for i in range(m):
+        kernelEval = kernelTrans(sVs, dataMat[i, :], ('rbf', k1))
+        predict = kernelEval.T*multiply(labelSV, alphas[svInd]) + b
+        if sign(predict) != sign(labelArr[i]): errorCount += 1
+    print 'the test error rate is: %f' % (float(errorCount)/m)
+
+testRbf()
+
+
+'''
+start = time.time()
+dataArr, labelArr = loadDataSet(r'E:\PythonWorkspace\MLIA\machinelearninginaction\Ch06\testSet.txt')
+b, alphas = smoP(dataArr, labelArr, 0.6, 0.001, 40)
+ws = calcWs(alphas, dataArr, labelArr)
+print '\n'
+print ws
+end = time.time()
+print 'Time consumption: %f s' % (end - start)
+
+
+
+
+
+
+start = time.time()
+dataArr, labelArr = loadDataSet(r'E:\PythonWorkspace\MLIA\machinelearninginaction\Ch06\testSet.txt')
+b, alphas = smoSimple(dataArr, labelArr, 0.6, 0.001, 40)
+print 'b'
+print b
+print 'alphas'
+print alphas
+print alphas[alphas>0]
+
+shape(alphas[alphas>0])
+for i in range(100):
+    if alphas[i]>0.0:
+        print dataArr[i], labelArr[i]
+end = time.time()
+print 'Time consumption: %f s' % (end - start)
+'''
